@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>社内ドキュメントQ&amp;A RAGアプリ 業務フロー図</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #1a1d27;
+    --panel-2: #232735;
+    --ink: #e8eaf0;
+    --muted: #9aa2b5;
+    --line: #333849;
+    --openai: #10a37f;      /* OpenAI課金 = 緑 */
+    --local: #4a90d9;       /* 自前計算 = 青 */
+    --actor: #d98a4a;       /* 人 = オレンジ */
+    --accent: #b47cff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 20px 64px;
+    background: radial-gradient(1200px 600px at 50% -100px, #1b2030, var(--bg));
+    color: var(--ink);
+    font-family: -apple-system, "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+    line-height: 1.7;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  header h1 {
+    font-size: 26px; margin: 0 0 6px;
+    letter-spacing: .02em;
+  }
+  header .sub { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 10px 20px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 14px 18px; margin-bottom: 28px;
+    font-size: 13.5px;
+  }
+  .legend .item { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 13px; height: 13px; border-radius: 4px; flex: none; }
+  .dot.openai { background: var(--openai); }
+  .dot.local  { background: var(--local); }
+  .dot.actor  { background: var(--actor); }
+  .dot.store  { background: var(--panel-2); border: 1.5px solid var(--muted); }
+
+  .phase {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 16px; padding: 20px 22px 8px; margin-bottom: 26px;
+  }
+  .phase h2 {
+    font-size: 18px; margin: 0 0 2px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .phase .tag {
+    font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px;
+  }
+  .tag.prep { background: rgba(74,144,217,.18); color: #9cc4f0; border: 1px solid #35597f; }
+  .tag.use  { background: rgba(180,124,255,.18); color: #cbb0ff; border: 1px solid #6a4f9f; }
+  .phase .desc { color: var(--muted); font-size: 13.5px; margin: 4px 0 14px; }
+
+  .mermaid { background: transparent; text-align: center; }
+
+  .note {
+    background: var(--panel-2); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 12px 16px; margin: 22px 0;
+    font-size: 13.5px; color: #d5d9e6;
+  }
+  .note b { color: var(--ink); }
+  .cost-row { display: flex; flex-wrap: wrap; gap: 12px; margin: 18px 0 4px; }
+  .cost-card {
+    flex: 1 1 300px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 14px 16px;
+  }
+  .cost-card h3 { margin: 0 0 6px; font-size: 14.5px; display: flex; align-items: center; gap: 8px; }
+  .cost-card.g { border-left: 4px solid var(--openai); }
+  .cost-card.b { border-left: 4px solid var(--local); }
+  .cost-card p { margin: 0; font-size: 13px; color: var(--muted); }
+  footer { color: var(--muted); font-size: 12px; margin-top: 30px; text-align: center; }
+  code { background: #000; padding: 1px 6px; border-radius: 5px; font-size: 12.5px; color: #b0f5d8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>社内ドキュメント Q&amp;A RAGアプリ — 業務フロー図</h1>
+    <div class="sub">誰が・何を・どの順でやるか。OpenAI課金する処理と自前計算(無料)を色分け。学習用途のためベクトルストアは現状メモリ内(配列)。</div>
+  </header>
+
+  <div class="legend">
+    <div class="item"><span class="dot actor"></span>人（管理者・社員）</div>
+    <div class="item"><span class="dot openai"></span>OpenAI API＝課金対象（ベクトル化・生成）</div>
+    <div class="item"><span class="dot local"></span>自前計算＝コスト0（分割・検索）</div>
+    <div class="item"><span class="dot store"></span>メモリストア（配列）</div>
+  </div>
+
+  <!-- フェーズ1 -->
+  <section class="phase">
+    <h2><span class="tag prep">フェーズ1</span> 準備：管理者が文書を仕込む（質問の前に1回）</h2>
+    <div class="desc">社内文書を「意味の座標」に変換して棚（ストア）に並べておく。この仕込みがないと検索できない。</div>
+    <div class="mermaid">
+flowchart TB
+  A["👤 管理者<br/>社内文書をアップロード<br/>（就業規則・手順書 等）"]:::actor
+  I["(1) 取り込み ingest<br/>文書を読み込む"]:::local
+  S["(2) 分割 split<br/>長い文書をチャンクに切る<br/>[chunk1, chunk2, ...]"]:::local
+  E["(3) ベクトル化 embed<br/>各チャンク → 数値ベクトル<br/>text-embedding-3-small"]:::openai
+  ST[("(4) 蓄積 store<br/>本文＋ベクトル＋出典を保存<br/>▶ メモリ内の配列に push")]:::store
+  D["✅ 取り込み完了<br/>（チャンク件数を表示）"]:::actor
+
+  A --> I --> S --> E --> ST --> D
+
+  classDef actor fill:#3a2a17,stroke:#d98a4a,color:#f2d8bf,stroke-width:1.5px;
+  classDef local fill:#16283d,stroke:#4a90d9,color:#cfe4fb,stroke-width:1.5px;
+  classDef openai fill:#0f2b23,stroke:#10a37f,color:#c7f2e2,stroke-width:1.5px;
+  classDef store fill:#232735,stroke:#9aa2b5,color:#e8eaf0,stroke-width:1.5px,stroke-dasharray:4 3;
+    </div>
+  </section>
+
+  <!-- フェーズ2 -->
+  <section class="phase">
+    <h2><span class="tag use">フェーズ2</span> 利用：社員が質問する（RAGの本体）</h2>
+    <div class="desc">質問も同じ座標に変換 → 棚から近いものを取り出す → それを根拠にLLMが答える。</div>
+    <div class="mermaid">
+flowchart TB
+  Q["👤 社員<br/>質問を入力<br/>例：「有給の申請方法は？」"]:::actor
+  QE["(3') 質問をベクトル化 embed<br/>質問文 → 数値ベクトル<br/>※(3)と同じ座標空間に置くのが肝"]:::openai
+  R["(5) 検索 retrieve<br/>配列を全件なめてコサイン類似度計算<br/>近い上位3件を取り出す"]:::local
+  ST2[("メモリストア（配列）<br/>保存済みチャンク群")]:::store
+  G["(6) 生成 generate<br/>取得3件＋質問をプロンプトに詰めて<br/>gpt-4o-mini に渡す"]:::openai
+  ANS["📄 出典つき回答を表示<br/>回答本文 ＋ 参照元ファイル名"]:::actor
+
+  Q --> QE --> R
+  ST2 -. 類似度計算の対象 .-> R
+  R --> G --> ANS
+
+  classDef actor fill:#3a2a17,stroke:#d98a4a,color:#f2d8bf,stroke-width:1.5px;
+  classDef local fill:#16283d,stroke:#4a90d9,color:#cfe4fb,stroke-width:1.5px;
+  classDef openai fill:#0f2b23,stroke:#10a37f,color:#c7f2e2,stroke-width:1.5px;
+  classDef store fill:#232735,stroke:#9aa2b5,color:#e8eaf0,stroke-width:1.5px,stroke-dasharray:4 3;
+    </div>
+  </section>
+
+  <div class="cost-row">
+    <div class="cost-card g">
+      <h3><span class="dot openai"></span>OpenAI課金 = 2箇所だけ</h3>
+      <p><b>(3)(3') ベクトル化</b>と<b>(6) 生成</b>のみAPIを呼ぶ。ここだけがトークン課金の対象。Embeddingは激安、生成は<code>gpt-4o-mini</code>で1質問≈0.09円。</p>
+    </div>
+    <div class="cost-card b">
+      <h3><span class="dot local"></span>自前計算 = コスト0</h3>
+      <p><b>(2) 分割</b>と<b>(5) 検索</b>はサーバー内のコードだけで動く。特に検索は「配列を全件ループしてコサイン類似度」＝APIを使わないので無料・高速。</p>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>核心：(3)と(3')は同じ embed。</b>取り込み時は「文書チャンクを」、質問時は「質問文を」──両方を<b>同じベクトル空間</b>に置くから、コサイン類似度で「近さ＝意味の近さ」が測れる。これがRAGの心臓部。
+  </div>
+
+  <div class="note">
+    <b>学習用の割り切り：</b>ベクトルストアは現状<b>メモリ内（配列）</b>。dev再起動で中身が消える／数万件で全件ループが重くなる、という体験を経てから、Step7で永続DB（Vector DB）へ差し替える。<b>「なぜ本番でVector DBが要るか」を身をもって知る</b>のが狙い。
+  </div>
+
+  <footer>rag-study01 — 学習用RAGアプリ 業務フロー図 / 生成: visual-explainer</footer>
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: "dark",
+    themeVariables: { fontSize: "14px", fontFamily: '-apple-system, "Hiragino Sans", sans-serif' },
+    flowchart: { curve: "basis", padding: 12, nodeSpacing: 40, rankSpacing: 46 }
+  });
+</script>
+</body>
+</html>

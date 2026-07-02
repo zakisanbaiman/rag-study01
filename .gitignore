@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+build/
+
+# env（APIキーは絶対にコミットしない）
+.env
+.env.local
+.env*.local
+
+# claude worktrees（グローバル開発ルール準拠）
+.claude/worktrees/
+
+# misc
+.DS_Store
+*.log
