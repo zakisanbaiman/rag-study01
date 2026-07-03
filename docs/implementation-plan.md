@@ -17,7 +17,9 @@
 | Embedding | `text-embedding-3-small` | 同じOpenAIキーで使える |
 | ベクトルストア | メモリ内（配列＋コサイン類似度）から | `VectorStore` インターフェースで抽象化し後で差し替え |
 | OpenAI SDK | `openai` npm（v6系） | 着手時に公式READMEで最新API形を写経確認 |
-| worktree運用 | **各ステップで厳密に切る** | グローバルルール遵守の練習。初回コミットのみ main 直コミット許可 |
+| worktree運用 | **各ステップで厳密に切る** | グローバルルール遵守の練習。初回コミット（`cee8fd1`）は消費済みのため、**Step 0 含む全ステップを worktree サイクルで実施** |
+| VectorStore 契約 | **最初から async（Promise ベース）** | 同期→非同期化は呼び出し側全部に波及する破壊的変更のため、遅い実装（DB）に合わせて契約を切る |
+| ingest 冪等性 | **clear→全再取り込み** | 再実行で重複チャンクが溜まるのを防ぐ最シンプル解。embed 再計算コスト増は Step 7 以降の学習材料 |
 
 ## 要確認ポイント（着手時に一次情報で再確認）
 
@@ -26,15 +28,21 @@
 - `text-embedding-3-small` の次元数（1536想定）、`gpt-4o-mini` の存続 → Step2で実物確認
 - git identity: 個人アカウントのメールを使用（学習リポジトリのため）。会社寄りにする場合はプロジェクトローカルで `git config user.email` を上書きするか着手時に確認
 
-## git init と worktree の順序（ルールとの整合）
+## worktree 運用（ルールとの整合）
 
-worktree は既存リポジトリの機能なので、新規プロジェクトでは先に作れない。よって以下が正しくルールと矛盾しない：
+リポジトリは初期化・初回コミット済み（`cee8fd1` 設計資料）。よって main への直接コミット例外はもう使えず、**Step 0 の scaffold 含めすべて worktree サイクルで行う**：
 
-1. `create-next-app` で `rag-study01` 生成（`/Users/naoto/dev/rag-study01`）
-2. `.gitignore` に `.claude/worktrees/` を追記
-3. `git init`（既に create-next-app が init 済みなら不要）
-4. **初回コミット** ← main への直接コミットが許される唯一の例外（コミット0件だと worktree/branch が作れないため）
-5. 以降は各ステップごとに `git worktree add .claude/worktrees/<branch> -b <branch>` → 作業 → コミット → main にマージ → `git worktree remove`
+1. 各ステップごとに `git worktree add .claude/worktrees/<branch> -b <branch>` → 作業 → コミット → main にマージ → `git worktree remove`
+2. **注意（工数が跳ねる箇所）**: `.env.local` は gitignore 対象のため worktree には存在しない。dev 動作確認するステップでは毎回 **`.env.local` のコピーと `npm install`** が必要（Step 1 以降）
+
+### create-next-app と既存ファイルの競合（Step 0 のブロッカー）
+
+`create-next-app` は非空ディレクトリ（既存の `README.md` / `docs/` / `.gitignore`）で競合エラーになるため、直接この場所には生成できない。**一時ディレクトリで生成 → 成果物を worktree に移送**する：
+
+1. `/tmp` 等で `create-next-app rag-study01-scaffold` を実行
+2. 生成物のうち `README.md` を除くファイル群を worktree にコピー（`.git` は持ち込まない）
+3. `README.md` は既存版を正とし、scaffold 版から必要な記述（scripts 説明等）だけ取り込む
+4. `.gitignore` は既存版と scaffold 版をマージ（`.claude/worktrees/` の行を残す）
 
 ## ディレクトリ構成（RAG 6段階がモジュール名に対応）
 
@@ -61,18 +69,20 @@ src/
       cosine.ts                 # コサイン類似度ユーティリティ
       index.ts                  # getStore() ファクトリ（実装差し替え点）
     openai.ts                   # OpenAIクライアント生成・APIキー秘匿の一元化
-  data/
-    sample-docs/                # 学習用サンプル文書（.md/.txt）
+data/
+  sample-docs/                  # 学習用サンプル文書（.md/.txt）※ビルド対象外のためプロジェクトルート直下（src/ に入れない）
 ```
 
 ### ストア抽象化インターフェース（設計の中心）
 
-`VectorStore` が持つべき契約：
-- `add(items: { id, text, embedding: number[], metadata })` — ベクトル+本文+出典メタを蓄積
-- `search(queryEmbedding: number[], k: number): RetrievedChunk[]` — 類似度上位k件
-- `clear()` / `size()`（任意）— 学習中のリセット・件数確認
+`VectorStore` が持つべき契約（**最初から async / Promise ベース**）：
+- `add(items: { id, text, embedding: number[], metadata }[]): Promise<void>` — ベクトル+本文+出典メタを蓄積
+- `search(queryEmbedding: number[], k: number): Promise<RetrievedChunk[]>` — 類似度上位k件
+- `clear(): Promise<void>` / `size(): Promise<number>` — ingest 冪等性（clear→全再取り込み）とリセット・件数確認に使うため**必須**
 
 設計の肝：
+- **契約は最初から async**。同期→非同期化は呼び出し側全部に `await` が伝播する破壊的変更だが、逆はコストゼロ（メモリ実装は同期処理を Promise で包むだけ）。抽象化は遅い方の実装（DB）に合わせて契約を切る → Step 7 の差し替えが本当に `store/index.ts` だけで済む
+- **ingest の冪等性は「clear→全再取り込み」**：ingest 実行のたびに `clear()` してから全文書を入れ直す。重複チャンクの蓄積を最シンプルに防ぐ。文書増加で embed 再計算コストが増える問題は docId 単位 upsert への進化と合わせて Step 7 以降の学習材料
 - **メタデータに出典（元ファイル名・チャンク位置）を必ず持たせる** → 出典つき回答の生命線
 - embedding は呼び出し側で計算済みを渡す設計 → Embeddingモデル変更がストアに波及しない
 - `store/index.ts` の `getStore()` だけ変えれば実装差し替え可能
@@ -82,9 +92,9 @@ src/
 
 各ステップ：worktree 作成 → 実装 → 動作確認 → コミット → main マージ → worktree 削除
 
-- **Step 0: 初期化とコミット基盤**
-  create-next-app / `.gitignore` 調整 / 初回コミット / `.env.local` 準備。
-  学び: 骨格・環境変数の扱い・worktree運用の起点。工数注意: create-next-app 新プロンプトで迷いやすい。
+- **Step 0: scaffold 移送とコミット基盤**
+  一時ディレクトリで create-next-app → 成果物を worktree に移送（README/.gitignore は既存版とマージ）→ main にマージ / `.env.local` 準備。
+  学び: 骨格・環境変数の扱い・worktree運用の起点。工数注意: **非空ディレクトリとの競合**（上記「create-next-app と既存ファイルの競合」参照）と create-next-app 新プロンプトで迷いやすい。
 
 - **Step 1: OpenAI 疎通確認（生成の最小単位）**
   `lib/openai.ts` + 単純な route で「固定プロンプト→1回answer」。
@@ -99,12 +109,13 @@ src/
   学び: 抽象化の効用、上位k件取得、HMR対策。工数注意: **HMRでストアが消える問題**でハマりやすい。
 
 - **Step 4: 取り込み+分割パイプライン（ingest）**
-  `ingest.ts`→`split.ts`（固定長+オーバーラップ）→embed→store.add。`api/ingest/route.ts`。
-  学び: チャンクサイズ/オーバーラップが精度に効く、出典メタ設計。工数注意: 分割戦略で沼る→**まず固定長で割り切る**。
+  `ingest.ts`→`split.ts`（固定長+オーバーラップ、**文字数ベース**で割り切る。トークンベースは発展課題）→embed→store.add。`api/ingest/route.ts` は冒頭で `store.clear()`（clear→全再取り込みで冪等に）。
+  embed は**チャンク配列を1リクエストにまとめてバッチ送信**（`embeddings.create` は配列入力可。1件ずつだと遅く、レート制限にも当たる）。
+  学び: チャンクサイズ/オーバーラップが精度に効く、出典メタ設計、冪等な取り込み。工数注意: 分割戦略で沼る→**まず固定長で割り切る**。
 
 - **Step 5: 検索→生成の接続（RAG完成）**
   `api/chat/route.ts`: 質問→embed→retrieve(k件)→コンテキスト注入→`generate.ts`→出典つき回答。
-  学び: プロンプト注入、出典の紐付け、ハルシネーション抑制指示。工数注意: 出典紐付けで工数が跳ねる→まず「回答本文＋参照ファイル名リスト」で十分。
+  学び: プロンプト注入、出典の紐付け、ハルシネーション抑制指示。**検索は無関係な質問でも必ず上位k件を返す**ため、「コンテキストに答えが無ければ分からないと答える」プロンプト指示で守る（類似度しきい値カットは発展課題）。工数注意: 出典紐付けで工数が跳ねる→まず「回答本文＋参照ファイル名リスト」で十分。
 
 - **Step 6: 最小チャットUI**
   `app/page.tsx`: 入力＋送信＋回答＋出典表示。Tailwind 最低限。ストリーミングは任意（後回し）。
@@ -125,10 +136,10 @@ src/
 
 ## 学習の主眼（マネジメント訓練として）
 
-- 各ステップの「工数が跳ねる箇所」を体で覚える（HMR/分割沼/出典紐付け/ストリーミング/ネイティブビルド）
+- 各ステップの「工数が跳ねる箇所」を体で覚える（HMR/分割沼/出典紐付け/ストリーミング/ネイティブビルド/worktree ごとの `.env.local` コピー＆`npm install`）
 - RAG完成後に **同じ質問を gpt-4o-mini と GPT-5.4 mini で比較**し、単価と体感精度の両方を測る
 - 「PoC（半日）→実用最低ライン（1〜2週）→本番品質（数ヶ月）」の落差を、各機能を作りながら実感する
 
 ## 次アクション
 
-Step 0（create-next-app → .gitignore 調整 → 初回コミット）から着手。着手前に「要確認ポイント」を一次情報で潰す。
+Step 0（worktree 作成 → 一時ディレクトリで create-next-app → 成果物移送 → README/.gitignore マージ → main マージ）から着手。着手前に「要確認ポイント」を一次情報で潰す。

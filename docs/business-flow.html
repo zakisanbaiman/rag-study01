@@ -126,9 +126,9 @@ flowchart TB
 flowchart TB
   Q["👤 社員<br/>質問を入力<br/>例：「有給の申請方法は？」"]:::actor
   QE["(3') 質問をベクトル化 embed<br/>質問文 → 数値ベクトル<br/>※(3)と同じ座標空間に置くのが肝"]:::openai
-  R["(5) 検索 retrieve<br/>配列を全件なめてコサイン類似度計算<br/>近い上位3件を取り出す"]:::local
+  R["(5) 検索 retrieve<br/>配列を全件なめてコサイン類似度計算<br/>近い上位k件（既定3）を取り出す"]:::local
   ST2[("メモリストア（配列）<br/>保存済みチャンク群")]:::store
-  G["(6) 生成 generate<br/>取得3件＋質問をプロンプトに詰めて<br/>gpt-4o-mini に渡す"]:::openai
+  G["(6) 生成 generate<br/>取得k件＋質問をプロンプトに詰めて<br/>gpt-4o-mini に渡す"]:::openai
   ANS["📄 出典つき回答を表示<br/>回答本文 ＋ 参照元ファイル名"]:::actor
 
   Q --> QE --> R
@@ -145,7 +145,7 @@ flowchart TB
   <div class="cost-row">
     <div class="cost-card g">
       <h3><span class="dot openai"></span>OpenAI課金 = 2箇所だけ</h3>
-      <p><b>(3)(3') ベクトル化</b>と<b>(6) 生成</b>のみAPIを呼ぶ。ここだけがトークン課金の対象。Embeddingは激安、生成は<code>gpt-4o-mini</code>で1質問≈0.09円。</p>
+      <p><b>(3)(3') ベクトル化</b>と<b>(6) 生成</b>のみAPIを呼ぶ。ここだけがトークン課金の対象。Embeddingは激安、生成は<code>gpt-4o-mini</code>で1質問≈0.09円（2026年時点の目安。価格・為替で変動）。</p>
     </div>
     <div class="cost-card b">
       <h3><span class="dot local"></span>自前計算 = コスト0</h3>
