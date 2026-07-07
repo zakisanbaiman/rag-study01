@@ -31,6 +31,11 @@ export default function Home() {
     }
   }
 
+  // ストリーミング中は常に履歴の先頭が「書きかけの回答」（loading 中は新規送信不可のため）
+  function updateHead(update: (qa: QA) => QA) {
+    setHistory((prev) => (prev.length ? [update(prev[0]), ...prev.slice(1)] : prev));
+  }
+
   async function handleAsk(e: FormEvent) {
     e.preventDefault();
     const q = question.trim();
@@ -44,13 +49,48 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: q }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setHistory((prev) => [
-        { question: q, answer: data.answer, sources: data.sources },
-        ...prev,
-      ]);
+      // ストリーム開始前のエラー（400/409/500）は従来どおり JSON で返る
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error);
+      }
+      if (!res.body) throw new Error("レスポンスボディがありません");
+
+      // 空の回答を先頭に置き、SSE イベントを受けるたびに埋めていく
+      setHistory((prev) => [{ question: q, answer: "", sources: [] }, ...prev]);
       setQuestion("");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      // ネットワークのチャンク境界はイベント境界と一致しないため行バッファが必要
+      let buffer = "";
+      let finished = false;
+
+      while (!finished) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? ""; // 末尾の未完イベントは次のチャンクに持ち越す
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith("data: ")) continue;
+          const event = JSON.parse(line.slice("data: ".length));
+
+          if (event.type === "sources") {
+            updateHead((qa) => ({ ...qa, sources: event.sources }));
+          } else if (event.type === "token") {
+            updateHead((qa) => ({ ...qa, answer: qa.answer + event.content }));
+          } else if (event.type === "done") {
+            finished = true;
+          } else if (event.type === "error") {
+            // 書きかけの回答は残したままエラーを表示する
+            setError(event.error);
+            finished = true;
+          }
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
