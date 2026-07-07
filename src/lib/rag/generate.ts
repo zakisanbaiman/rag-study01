@@ -1,0 +1,44 @@
+import { CHAT_MODEL, getOpenAI } from "@/lib/openai";
+import type { RetrievedChunk } from "./types";
+
+// (6) 生成: 検索で得たチャンクをコンテキストとしてプロンプトに注入し、出典つき回答を作る。
+// モデルと生成APIの知識はこのファイルに閉じる（差し替え時はここだけ変える）。
+
+// 検索は無関係な質問でも必ず上位k件を返すため、
+// 「コンテキストに無ければ分からないと答える」指示がハルシネーション抑制の生命線。
+const SYSTEM_PROMPT = `あなたは社内ドキュメントQ&Aアシスタントです。以下のルールを厳守してください。
+
+- 回答は「コンテキスト」に含まれる情報だけを根拠にすること
+- コンテキストに答えが無い場合は「提供された文書からは分かりません」と答えること。一般知識や推測で補わない
+- 回答は日本語で簡潔に。根拠にした出典番号を文末に [1] のように付けること`;
+
+export type GenerateResult = {
+  answer: string;
+  usage: { promptTokens: number; completionTokens: number };
+};
+
+export async function generate(
+  question: string,
+  chunks: RetrievedChunk[]
+): Promise<GenerateResult> {
+  const context = chunks
+    .map((c, i) => `[${i + 1}] 出典: ${c.metadata.source}\n${c.text}`)
+    .join("\n\n");
+
+  const client = getOpenAI();
+  const completion = await client.chat.completions.create({
+    model: CHAT_MODEL,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: `コンテキスト:\n${context}\n\n質問: ${question}` },
+    ],
+  });
+
+  return {
+    answer: completion.choices[0].message.content ?? "",
+    usage: {
+      promptTokens: completion.usage?.prompt_tokens ?? 0,
+      completionTokens: completion.usage?.completion_tokens ?? 0,
+    },
+  };
+}
